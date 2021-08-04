@@ -1,6 +1,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_timer.h>
 #include <SDL2/SDL_image.h>
+#include <SDL2/SDL_video.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -24,12 +25,30 @@ struct tetronimo {
 };
 
 struct presses {
-    bool up;
-    bool down;
+    bool rotc;
+    bool sdrop;
     bool right;
     bool left;
-    bool start;
-    
+    bool enter;
+    bool hdrop;
+    bool rota;
+    bool rot180;
+    bool hold;
+    bool quit;
+};
+
+enum states{
+    MENU_STATE,
+    GAME_STATE,
+    END_STATE
+};
+
+struct game_data {
+    int level;
+    int score;
+    struct tetronimo current;
+    bool *upcoming[14];
+    struct block matrix[40][10];
 };
 
 //define shapes of tetronimoes
@@ -62,13 +81,15 @@ const bool T[3][3] = {{0, 1, 0},
                       {1, 1, 1}, 
                       {0, 0, 0}};
 
-const bool *tetronimoes[7] = {&O, &I, &S, &Z, &L, &J, &T};
+const bool *tetronimoes[7] = {&O[0][0], &I[0][0], &S[0][0], &Z[0][0], &L[0][0], &J[0][0], &T[0][0]};
 
-void emptyMatrix(struct block **matrix) {
+enum states (*state_functions[3])(void *) = {(*menuRun), (*gameRun), (*endRun)};
+
+void emptyMatrix(struct block matrix[40][10]) {
     int i, j;
     for (i = 0; i < 40; i++) {
         for (j = 0; j < 10; j++) {
-            matrix[i][j].exists = false;
+            matrix[i][j].exists = true;
         }
     }
 }
@@ -108,23 +129,132 @@ void drawMatrix(SDL_Renderer * renderer, struct block **matrix, int x, int y) {
     }
 }
 
-bool bag(bool *upcoming, int from) {
-    bool *choices[7] = tetronimoes;
+void choicesArray(const bool *tetronimoes, bool *dest) {
+    int i;
+    for (i = 0; i < 7; i++) {
+        dest[i] = tetronimoes[i];
+    }
+}
+
+//here we generate a new array of 7 blocks and add those blocks to the array 'upcoming' from the point 'from'
+void bag(bool *upcoming, int from) {
+    bool choices[7];
+    choicesArray(&tetronimoes[0][0], choices);
     int i;
     for (i = 0; i < 20; i++) {
         int first = rand() %7;
-        bool *value = choices[first];
+        bool value = choices[first];
         int second = rand() %7;
         choices[first] = choices[second];
-        choices[second] = *value;
+        choices[second] = value;
     }
     for (i = 0; i < 7; i++) {
         upcoming[from + i] = choices[i];
     }
 }
 
-void newCurrent(struct tetronimo *current) {
+void updatePressed (struct presses *pressed) {
+    SDL_Event e;
+    struct presses just_pressed;
+    while (SDL_PollEvent(&e)) {
+        switch (e.type) {
+            case SDL_KEYDOWN:
+                switch (e.key.keysym.sym) {
+                    case SDLK_UP:
+                        pressed->rotc = true;
+                        just_pressed.rotc = true;
+                        break;
+                    case SDLK_DOWN:
+                        pressed->sdrop = true;
+                        just_pressed.sdrop = true;
+                        break;
+                    case SDLK_LEFT:
+                        pressed->left = true;
+                        just_pressed.left = true;
+                        break;
+                    case SDLK_RIGHT:
+                        pressed->right = true;
+                        just_pressed.right = true;
+                        break;
+                    case SDLK_KP_ENTER:
+                        pressed->enter = true;
+                        just_pressed.enter = true;
+                        break;
+                    case SDLK_SPACE:
+                        pressed->hdrop = true;
+                        just_pressed.hdrop = true;
+                        break;
+                    case SDLK_z:
+                        pressed->rota = true;
+                        just_pressed.rota = true;
+                        break;
+                    case SDLK_x:
+                        pressed->rot180 = true;
+                        just_pressed.rot180 = true;
+                        break;
+                    case SDLK_RSHIFT:
+                        pressed->hold = true;
+                        just_pressed.hold = true;
+                        break;
+                    case SDLK_ESCAPE:
+                        pressed->quit = true;
+                        just_pressed.quit = true;
+                        break;
+                }
+                break;
+            case SDL_KEYUP:
+                switch (e.key.keysym.sym) {
+                    case SDLK_UP:
+                        pressed->rotc = false;
+                        break;
+                    case SDLK_DOWN:
+                        pressed->sdrop = false;
+                        break;
+                    case SDLK_LEFT:
+                        pressed->left = false;
+                        break;
+                    case SDLK_RIGHT:
+                        pressed->right = false;
+                        break;
+                    case SDLK_KP_ENTER:
+                        pressed->enter = false;
+                        break;
+                    case SDLK_SPACE:
+                        pressed->hdrop = false;
+                        break;
+                    case SDLK_z:
+                        pressed->rota = false;
+                        break;
+                    case SDLK_x:
+                        pressed->rot180 = false;
+                        break;
+                    case SDLK_RSHIFT:
+                        pressed->hold = false;
+                        break;
+                    case SDLK_ESCAPE:
+                        pressed->quit = false;
+                        break;
+                }
+                break;
+            case SDL_QUIT:
+                pressed->quit = true;
+                break;
+            default:
+                break;
+        }
+    }
 
+}
+
+void newCurrent(bool *upcoming[14], struct tetronimo *current) {
+    current->base = upcoming[0];
+    current->rot = 0;
+    current->x = 3;
+    current->y = 21;
+    int i;
+    for (i = 1; i < 14; i++) {
+        upcoming[i-1] = upcoming[i];
+    }
 }
 
 void render(SDL_Renderer *renderer) {
@@ -140,27 +270,15 @@ void render(SDL_Renderer *renderer) {
     SDL_RenderPresent(renderer);
 }
 
-void eventHandling(bool *exit) {
-    SDL_Event e;
-    if (SDL_PollEvent(&e)) {
-        if (e.type == SDL_QUIT) {
-            exit = true;
-        }
-    }
-}
-
 void physics(int level, Uint64 *elapsed_time) {
 
     int gravity = (0.8-((level-1)*0.007));
 
 }
 
-void gameEventHandling(bool *game, int *score) {
-
-}
+void initGame() {}
 
 int main() {
-
     //initialise
     if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO)!= 0) {
         printf("error initialising SDL: %s\n", SDL_GetError());
@@ -176,33 +294,33 @@ int main() {
         SDL_Quit();
         return 1;
     }
-    
-    int level = 1;
-    int score = 0;
-    Uint64 elapsed_time = SDL_GetPerformanceCounter();
-    struct tetronimo current;
-    bool *upcoming[14];
-    struct block matrix[40][10];
-    emptyMatrix(matrix);
 
+    struct presses pressed;
     bool exit = false;
-    bool game = true;
+    enum states state = MENU_STATE;
+    Uint64 elapsed_time = SDL_GetPerformanceCounter();
+    struct game_data game;
+
     while (!exit) {
+        updatePressed(&pressed);
         Uint64 start = SDL_GetPerformanceCounter();
 
-        eventHandling(&exit);
 
-        while (game) {
-            move
-            physics(level, &elapsed_time);
-            render(renderer);
-        }
+        //while (game) {
+            
+          //  physics(level, &elapsed_time);
+        render(renderer);
+        //}
 
         //wait
         Uint64 end = SDL_GetPerformanceCounter();
         float elapsedMS = (end - start) / (float)SDL_GetPerformanceFrequency() * 1000.0f;
-        SDL_Delay(floor(16.666f - elapsedMS));
+        if (!(elapsedMS > 16.666f)) {
+            SDL_Delay(floor(16.666f - elapsedMS));
+        }
     }
+
+    printf("exit\n");
 
     //destroy window and renderer and uninitialise SDL
     SDL_DestroyRenderer(renderer);
