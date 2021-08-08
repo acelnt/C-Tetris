@@ -15,7 +15,7 @@ struct block{
     SDL_Colour col;
 };
 
-struct tetronimo {
+struct tetromino {
     bool base[4][4];
     char type;
     int x;
@@ -51,21 +51,25 @@ const struct block_colours {
     SDL_Colour J;
     SDL_Colour O;
 } block_colours = {
-    {0, 0, 255, 255},
-    {255, 0, 0, 255},
-    {0, 255, 0, 255},
-    {255, 0, 255, 255},
-    {255, 165, 0, 255},
-    {0, 0, 100, 255},
-    {255, 255, 0, 255}
+    (SDL_Colour) {0, 255, 255, 255},
+    (SDL_Colour) {255, 0, 0, 255},
+    (SDL_Colour) {0, 255, 0, 255},
+    (SDL_Colour) {200, 0, 200, 255},
+    (SDL_Colour) {255, 165, 0, 255},
+    (SDL_Colour) {0, 0, 255, 255},
+    (SDL_Colour) {255, 255, 0, 255}
 };
 
 struct game_data {
     int level;
     int score;
-    struct tetronimo current;
-    struct tetronimo *upcoming[14];
+    struct tetromino current;
+    struct tetromino upcoming[14];
     struct block matrix[40][10];
+    Uint64 last_drop;
+    Uint64 right_das;
+    Uint64 left_das;
+
 };
 
 struct assets {
@@ -80,7 +84,7 @@ struct pos {
 
 struct assets assets;
 
-//define shapes of tetronimoes
+//define shapes of tetrominoes
 const bool O[4][4] = {{0, 1, 1, 0}, 
                       {0, 1, 1, 0}, 
                       {0, 0, 0, 0},
@@ -116,15 +120,36 @@ const bool T[4][4] = {{0, 1, 0, 0},
                       {0, 0, 0, 0},
                       {0, 0, 0, 0}};
 
-const bool tetronimoes[7][4][4] = {O, I, S, Z, L, J, T};
-const char names[7] = {'O', 'I', 'S', 'Z', 'L', 'J', 'T'};
+bool tetrominoes[7][4][4];
+const char names[7] = {'I', 'T', 'Z', 'S', 'L', 'J', 'O'};
 
 void emptyMatrix(struct block matrix[40][10]) {
     int i, j;
     for (i = 0; i < 40; i++) {
         for (j = 0; j < 10; j++) {
-            matrix[i][j].exists = true;
+            matrix[i][j].exists = false;
         }
+    }
+}
+
+SDL_Colour getBlockColour(char type) {
+    switch(type) {
+        case 'I':
+            return block_colours.I;
+        case 'T':
+            return block_colours.T;
+        case 'L':
+            return block_colours.L;
+        case 'J':
+            return block_colours.J;
+        case 'S':
+            return block_colours.S;
+        case 'Z':
+            return block_colours.Z;
+        case 'O':
+            return block_colours.O;
+        default:
+            return (SDL_Colour) {0, 0, 0, 255};
     }
 }
 
@@ -152,7 +177,7 @@ void drawBlock(SDL_Renderer * renderer, int x, int y, SDL_Colour col) {
     SDL_RenderFillRect(renderer, &rect);
 }
 
-void drawMatrix(SDL_Renderer * renderer, struct block **matrix, int x, int y) {
+void drawMatrix(SDL_Renderer * renderer, struct block matrix[][10], int x, int y) {
     int i, j;
     for (i = 0; i < 20; i++) {
         for (j = 0; j < 10; j++) {
@@ -163,40 +188,80 @@ void drawMatrix(SDL_Renderer * renderer, struct block **matrix, int x, int y) {
     }
 }
 
-void drawTetronimo(SDL_Renderer *renderer, struct tetronimo tetronimo, int x, int y) {
+void drawTetromino(SDL_Renderer *renderer, struct tetromino tetromino, int board_x, int board_y) {
     int i, j;
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
-            if (tetronimo.base[i][j]) {
-                drawBlock(renderer, x + j*SQUARE_SIZE, y + i*SQUARE_SIZE, getColour(tetronimo.type));
+            if (tetromino.base[i][j]) {
+                drawBlock(renderer, board_x + tetromino.x*SQUARE_SIZE + j*SQUARE_SIZE, board_y + (20-tetromino.y)*SQUARE_SIZE + i*SQUARE_SIZE, getBlockColour(tetromino.type));
             }
         }
     }
 }
 
-void choicesArray(const bool tetronimoes[7], bool *dest) {
+void duplicateBase(bool base[][4], bool target[][4]) {
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            target[i][j] = base[i][j];
+        }
+    }
+}
+
+void initTetrominoes() {
+    duplicateBase(I, tetrominoes[0]);
+    duplicateBase(T, tetrominoes[1]);
+    duplicateBase(Z, tetrominoes[2]);
+    duplicateBase(S, tetrominoes[3]);
+    duplicateBase(L, tetrominoes[4]);
+    duplicateBase(J, tetrominoes[5]);
+    duplicateBase(O, tetrominoes[6]);
+}
+
+void getTetrominoes(bool tetrs[][4][4]) {
     int i;
     for (i = 0; i < 7; i++) {
-        dest[i] = tetronimoes[i];
+        duplicateBase(tetrominoes[i], tetrs[i]);
+    }
+}
+
+void getTetrominoesNames(char *nams) {
+    int i;
+    for (i = 0; i < 7; i++) {
+        nams[i] = names[i];
     }
 }
 
 //here we generate a new array of 7 blocks and add those blocks to the array 'upcoming' from the point 'from'
-void extendUpcoming(bool *upcoming[], int from) {
-    bool choices[7];
-    choicesArray(tetronimoes, &choices);
+void extendUpcoming(struct tetromino upcoming[], int from) {
+    struct tetromino selection[7];
+    bool choices[7][4][4];
+    getTetrominoes(&choices);
+
     char choice_names[7];
-    choicesArray(names, &choice_names);
-    int i;
-    for (i = 0; i < 20; i++) {
-        int first = rand() %7;
-        bool value = choices[first];
-        int second = rand() %7;
-        choices[first] = choices[second];
-        choices[second] = value;
+    getTetrominoesNames(&choice_names);
+
+    int length;
+    for (length = 0; length < 7; length++) {
+        int random = rand() % (7-length);
+        struct tetromino temp;
+
+        duplicateBase(&choices[random], &temp.base);
+        temp.type = choice_names[random];
+        temp.y = 21;
+        temp.x = 3;
+
+        selection[length] = temp;
+
+        int i;
+        for (i = random; i < 7; i++) {
+            duplicateBase(choices[i+1], choices[i]);
+            choice_names[i] = choice_names[i + 1];
+        }
     }
+    int i;
     for (i = 0; i < 7; i++) {
-        upcoming[from + i] = choices[i];
+        upcoming[from + i] = selection[i];
     }
 }
 
@@ -294,20 +359,13 @@ struct presses updatePressed (struct presses *pressed) {
     return just_pressed;
 }
 
-struct SDL_Colour getColour(char type) {
-    switch(type) {
-        case 'I':
-            return block_colours.I;
-    }
-}
-
-void newCurrent(bool *upcoming[], struct tetronimo *current) {
+void newCurrent(struct tetromino upcoming[], struct tetromino *current) {
     static int count = 0;
     count += 1;
-    bool *next = &current->base;
-    next = upcoming[0];
-    current->x = 3;
-    current->y = 21;
+    duplicateBase(upcoming[0].base, current->base);
+    current->y = upcoming[0].y;
+    current->x = upcoming[0].x;
+    current->type = upcoming[0].type;
     int i;
     for (i = 1; i < 14; i++) {
         upcoming[i-1] = upcoming[i];
@@ -369,11 +427,23 @@ void initGame(struct game_data *data) {
     data->score = 0;
 }
 
-enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, Uint64 elapsed_time) {
+void drawGame(SDL_Renderer *renderer, struct tetromino matrix[40][20], struct tetromino current) {
     struct pos board_pos = {WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10};
     drawBoard(renderer, board_pos.x, board_pos.y, SQUARE_SIZE);
-    //drawMatrix(renderer, &data->matrix, WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10);
-    drawTetronimo(renderer, data->current, board_pos.x, board_pos.y);
+    drawMatrix(renderer, matrix, WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10);
+    drawTetromino(renderer, current, board_pos.x, board_pos.y);
+}
+
+void gravity() {
+    
+}
+
+enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, Uint64 elapsed_time) {
+    gravity(&data->current, &data->matrix);
+
+
+
+    drawGame(renderer, data->matrix, data->current);    
 
     return GAME_STATE;
 }
@@ -413,7 +483,10 @@ int main() {
         return 1;
     }
 
+    srand(time(NULL) );
+
     preloadAssets(renderer);
+    initTetrominoes();
 
     struct presses pressed = presses_default;
     struct presses just_pressed = presses_default;
