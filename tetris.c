@@ -66,7 +66,7 @@ struct game_data {
     struct tetromino current;
     struct tetromino upcoming[14];
     struct block matrix[40][10];
-    Uint64 last_drop;
+    double last_drop;
     Uint64 right_das;
     Uint64 left_das;
 
@@ -418,29 +418,53 @@ void preloadAssets(SDL_Renderer *renderer) {
     assets.play_button = loadTexture(renderer, "play button.png");
 }
 
-void initGame(struct game_data *data) {
+void initGame(struct game_data *data, double elapsed_time) {
     extendUpcoming(data->upcoming, 0);
     extendUpcoming(data->upcoming, 7);
     newCurrent(data->upcoming, &(data->current));
     data->level = 1;
     emptyMatrix(data->matrix);
     data->score = 0;
+    data->last_drop = elapsed_time;
 }
 
-void drawGame(SDL_Renderer *renderer, struct tetromino matrix[40][20], struct tetromino current) {
+void drawGame(SDL_Renderer *renderer, struct block matrix[40][20], struct tetromino current) {
     struct pos board_pos = {WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10};
     drawBoard(renderer, board_pos.x, board_pos.y, SQUARE_SIZE);
     drawMatrix(renderer, matrix, WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10);
     drawTetromino(renderer, current, board_pos.x, board_pos.y);
 }
 
-void gravity() {
-    
+bool collides(struct block matrix[40][10], struct tetromino current, int offset_x, int offset_y) {
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            if (current.base[i][j]) {
+                if (current.x + i + offset_x < 0 || current.x + i + offset_x > 9 || current.y - j - offset_y < 0 || current.y - j - offset_y > 40 || matrix[current.y - j - offset_y][i + offset_x + current.x].exists) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
-enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, Uint64 elapsed_time) {
-    gravity(&data->current, &data->matrix);
+void tryDrop(int level, struct tetromino *current, struct block matrix[40][10], double *last_drop, double elapsed_time) {
+    float gravity = (0.8-((level-1)*0.007));
+    if (elapsed_time > *last_drop + gravity) {
+        *last_drop = elapsed_time;
 
+        if (!collides(matrix, *current, 0, 1)) {
+            current->y = current->y - 1;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
+    tryDrop(data->level, &data->current, data->matrix, &data->last_drop, elapsed_time);
 
 
     drawGame(renderer, data->matrix, data->current);    
@@ -492,10 +516,11 @@ int main() {
     struct presses just_pressed = presses_default;
     bool exit = false;
     enum states state = MENU_STATE;
-    Uint64 elapsed_time = SDL_GetPerformanceCounter();
+    double elapsed_time;
     struct game_data data;
 
     while (!exit) {
+        elapsed_time = SDL_GetPerformanceCounter()/(float)SDL_GetPerformanceFrequency();
         just_pressed = updatePressed(&pressed);
 
         if (pressed.quit) {
@@ -511,7 +536,7 @@ int main() {
             case MENU_STATE:
                 state = menuRun(renderer, just_pressed);
                 if (state == GAME_STATE) {
-                    initGame(&data);
+                    initGame(&data, elapsed_time);
                 }
                 break;
             case GAME_STATE:
