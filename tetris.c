@@ -498,9 +498,16 @@ enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct press
         }
     }
 
-   // if (just_pressed.left) {
-     ///   if (!collides(data->matrix))
-    //}
+    if (just_pressed.left) {
+        if (!collides(data->matrix, data->current, -1, 0)) {
+            data->current.x = data->current.x - 1;
+        }
+    }
+    if (just_pressed.right) {
+        if (!collides(data->matrix, data->current, 1, 0)) {
+            data->current.x = data->current.x + 1;
+        }
+    }
 
     drawGame(renderer, data->matrix, data->current);    
 
