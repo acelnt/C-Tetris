@@ -182,7 +182,7 @@ void drawMatrix(SDL_Renderer * renderer, struct block matrix[][10], int x, int y
     for (i = 0; i < 20; i++) {
         for (j = 0; j < 10; j++) {
             if (matrix[i][j].exists) {
-                drawBlock(renderer, x + j*SQUARE_SIZE,y + (20-i)*SQUARE_SIZE, matrix[i][j].col);
+                drawBlock(renderer, x + j*SQUARE_SIZE,y + (19-i)*SQUARE_SIZE, matrix[i][j].col);
             }
         }
     }
@@ -193,7 +193,7 @@ void drawTetromino(SDL_Renderer *renderer, struct tetromino tetromino, int board
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             if (tetromino.base[i][j]) {
-                drawBlock(renderer, board_x + tetromino.x*SQUARE_SIZE + j*SQUARE_SIZE, board_y + (20-tetromino.y)*SQUARE_SIZE + i*SQUARE_SIZE, getBlockColour(tetromino.type));
+                drawBlock(renderer, board_x + tetromino.x*SQUARE_SIZE + j*SQUARE_SIZE, board_y + (19-tetromino.y)*SQUARE_SIZE + i*SQUARE_SIZE, getBlockColour(tetromino.type));
             }
         }
     }
@@ -248,7 +248,7 @@ void extendUpcoming(struct tetromino upcoming[], int from) {
 
         duplicateBase(&choices[random], &temp.base);
         temp.type = choice_names[random];
-        temp.y = 21;
+        temp.y = 20;
         temp.x = 3;
 
         selection[length] = temp;
@@ -359,7 +359,7 @@ struct presses updatePressed (struct presses *pressed) {
     return just_pressed;
 }
 
-void newCurrent(struct tetromino upcoming[], struct tetromino *current) {
+bool newCurrent(struct tetromino upcoming[], struct tetromino *current) {
     static int count = 0;
     count += 1;
     duplicateBase(upcoming[0].base, current->base);
@@ -374,12 +374,6 @@ void newCurrent(struct tetromino upcoming[], struct tetromino *current) {
         count = 0;
         extendUpcoming(upcoming, 7);
     }
-}
-
-void physics(int level, Uint64 *elapsed_time) {
-
-    int gravity = (0.8-((level-1)*0.007));
-
 }
 
 SDL_Texture* loadTexture(SDL_Renderer *renderer, const char *path) {
@@ -440,7 +434,8 @@ bool collides(struct block matrix[40][10], struct tetromino current, int offset_
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             if (current.base[i][j]) {
-                if (current.x + i + offset_x < 0 || current.x + i + offset_x > 9 || current.y - j - offset_y < 0 || current.y - j - offset_y > 40 || matrix[current.y - j - offset_y][i + offset_x + current.x].exists) {
+                //printf("%i\n", current.y - i - offset_y);
+                if (current.x + j + offset_x < 0 || current.x + j + offset_x > 9 || current.y - i - offset_y < 0 || current.y - i - offset_y > 40 || matrix[current.y - i - offset_y][j + offset_x + current.x].exists) {
                     return true;
                 }
             }
@@ -449,8 +444,9 @@ bool collides(struct block matrix[40][10], struct tetromino current, int offset_
     return false;
 }
 
-void tryDrop(int level, struct tetromino *current, struct block matrix[40][10], double *last_drop, double elapsed_time) {
+bool tryDrop(int level, struct tetromino *current, struct block matrix[40][10], double *last_drop, double elapsed_time) {
     float gravity = (0.8-((level-1)*0.007));
+    //float gravity = 0.02;
     if (elapsed_time > *last_drop + gravity) {
         *last_drop = elapsed_time;
 
@@ -463,9 +459,48 @@ void tryDrop(int level, struct tetromino *current, struct block matrix[40][10], 
     return true;
 }
 
-enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
-    tryDrop(data->level, &data->current, data->matrix, &data->last_drop, elapsed_time);
+bool overflows(struct tetromino piece) {
+    bool result = true;
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            if (piece.base[i][j]) {
+                if (i < 20) {
+                    result = false;
+                }
+            }
+        }
+    }
+    return result;
+}
 
+bool lockPiece(struct tetromino piece, struct block matrix[40][10]) {
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            if (piece.base[i][j]) {
+                matrix[piece.y - i][piece.x + j].exists = true;
+                matrix[piece.y - i][piece.x + j].col = getBlockColour(piece.type);
+            }
+        }
+    }
+    return overflows(piece);
+}
+
+enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
+    if (!tryDrop(data->level, &data->current, data->matrix, &data->last_drop, elapsed_time)) {
+        if (lockPiece(data->current, data->matrix)) {
+            return END_STATE;
+        }
+        newCurrent(data->upcoming, &data->current);
+        if (collides(data->matrix, data->current, 0, 0)) {
+            return END_STATE;
+        }
+    }
+
+   // if (just_pressed.left) {
+     ///   if (!collides(data->matrix))
+    //}
 
     drawGame(renderer, data->matrix, data->current);    
 
