@@ -11,6 +11,8 @@
 #define SQUARE_SIZE 20
 #define SDROP_GRAVITY 0.1
 #define LOCK_DELAY 0.5
+#define DAS 0.133
+#define DAS_MOVE_SPEED 0.05
 
 struct block{
     bool exists;
@@ -69,8 +71,9 @@ struct game_data {
     struct tetromino upcoming[14];
     struct block matrix[40][10];
     double last_drop;
-    Uint64 right_das;
-    Uint64 left_das;
+    double right_das;
+    double left_das;
+    double last_das_move;
     bool locking;
     double started_locking;
 };
@@ -356,40 +359,42 @@ struct presses updatePressed (struct presses *pressed) {
                             just_pressed.quit = true;
                             break;
                     }
-                    break;
                 }
+                break;
             case SDL_KEYUP:
-                switch (e.key.keysym.sym) {
-                    case SDLK_UP:
-                        pressed->rotc = false;
-                        break;
-                    case SDLK_DOWN:
-                        pressed->sdrop = false;
-                        break;
-                    case SDLK_LEFT:
-                        pressed->left = false;
-                        break;
-                    case SDLK_RIGHT:
-                        pressed->right = false;
-                        break;
-                    case SDLK_KP_ENTER:
-                        pressed->enter = false;
-                        break;
-                    case SDLK_SPACE:
-                        pressed->hdrop = false;
-                        break;
-                    case SDLK_z:
-                        pressed->rota = false;
-                        break;
-                    case SDLK_x:
-                        pressed->rot180 = false;
-                        break;
-                    case SDLK_RSHIFT:
-                        pressed->hold = false;
-                        break;
-                    case SDLK_ESCAPE:
-                        pressed->quit = false;
-                        break;
+                if (e.key.repeat == 0) {
+                    switch (e.key.keysym.sym) {
+                        case SDLK_UP:
+                            pressed->rotc = false;
+                            break;
+                        case SDLK_DOWN:
+                            pressed->sdrop = false;
+                            break;
+                        case SDLK_LEFT:
+                            pressed->left = false;
+                            break;
+                        case SDLK_RIGHT:
+                            pressed->right = false;
+                            break;
+                        case SDLK_KP_ENTER:
+                            pressed->enter = false;
+                            break;
+                        case SDLK_SPACE:
+                            pressed->hdrop = false;
+                            break;
+                        case SDLK_z:
+                            pressed->rota = false;
+                            break;
+                        case SDLK_x:
+                            pressed->rot180 = false;
+                            break;
+                        case SDLK_RSHIFT:
+                            pressed->hold = false;
+                            break;
+                        case SDLK_ESCAPE:
+                            pressed->quit = false;
+                            break;
+                    }
                 }
                 break;
             case SDL_QUIT:
@@ -504,6 +509,7 @@ void initGame(struct game_data *data, double elapsed_time) {
     data->last_drop = elapsed_time;
     data->locking = false;
     data->started_locking = elapsed_time;
+    data->last_das_move = elapsed_time;
 }
 
 void drawGhost(SDL_Renderer *renderer, struct block matrix[40][10], struct tetromino piece, struct pos board_pos) {
@@ -602,27 +608,62 @@ int getDroppedPos(struct block matrix[40][10], struct tetromino piece) {
     }
 }
 
-enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
-    tryDrop(data->level, &data->current, data->matrix, &data->last_drop, elapsed_time, pressed.sdrop);
-        
-    if (collides(data->matrix, data->current.base, (struct pos) {data->current.x, data->current.y - 1})) {
-        if (data->locking) {
-            if (elapsed_time > data->started_locking + LOCK_DELAY) {
-                if (lockPiece(data->current, data->matrix)) {
-                    return END_STATE;
+int getDASsedPos(struct block matrix[40][10], struct tetromino piece, int direction) {
+    int move = 0;
+    while (true) {
+        if (collides(matrix, piece.base, (struct pos) {piece.x + move, piece.y})) {
+            return piece.x + move - direction;
+        }
+        move = move + direction;
+    }
+}
+
+bool lock_piece(struct tetromino *piece, struct block matrix[40][10], struct tetromino upcoming[14]) {
+    if (lockPiece(*piece, matrix)) {
+        return false;
+    }
+    newCurrent(upcoming, piece);
+    if (collides(matrix, piece->base, (struct pos) {piece->x, piece->y})) {
+        return false;
+    }
+    return true;
+}
+
+bool gameKeyboardHandling(struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
+    if (pressed.left) {
+        if (elapsed_time > data->left_das + DAS) {
+            if (DAS_MOVE_SPEED == 0) {
+                data->current.x = getDASsedPos(data->matrix, data->current, -1);
+            }
+            else if (elapsed_time > data->last_das_move + DAS_MOVE_SPEED) {
+                if(!collides(data->matrix, data->current.base, (struct pos) {data->current.x - 1, data->current.y})) {
+                    data->current.x = data->current.x - 1;
+                    data->last_das_move = elapsed_time;
                 }
-                newCurrent(data->upcoming, &data->current);
-                if (collides(data->matrix, data->current.base, (struct pos) {data->current.x, data->current.y})) {
-                    return END_STATE;
-                }
-                data->locking = false;
             }
         } else {
-            data->locking = true;
-            data->started_locking = elapsed_time;
+            data->last_das_move = elapsed_time;
         }
     } else {
-        data->locking = false;
+        data->left_das = elapsed_time;
+    }
+
+    if (pressed.right) {
+        if (elapsed_time > data->right_das + DAS) {
+            if (DAS_MOVE_SPEED == 0) {
+                data->current.x = getDASsedPos(data->matrix, data->current, 1);
+            }
+            else if (elapsed_time > data->last_das_move + DAS_MOVE_SPEED) {
+                if(!collides(data->matrix, data->current.base, (struct pos) {data->current.x + 1, data->current.y})) {
+                    data->current.x = data->current.x + 1;
+                    data->last_das_move = elapsed_time;
+                }
+            }
+        } else {
+            data->last_das_move = elapsed_time;
+        }
+    } else {
+        data->right_das = elapsed_time;
     }
 
     if (just_pressed.left) {
@@ -656,6 +697,45 @@ enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct press
         }
     }
 
+    if (just_pressed.hdrop) {
+        data->current.y = data->current.y - getDroppedPos(data->matrix, data->current);
+        if (!lock_piece(&data->current, data->matrix, data->upcoming)) {
+            return false;
+        }
+        data->locking = false;
+    }
+}
+
+bool gameGravity(struct game_data *data, struct presses pressed, double elapsed_time) {
+    tryDrop(data->level, &data->current, data->matrix, &data->last_drop, elapsed_time, pressed.sdrop);
+
+    if (collides(data->matrix, data->current.base, (struct pos) {data->current.x, data->current.y - 1})) {
+        if (data->locking) {
+            if (elapsed_time > data->started_locking + LOCK_DELAY) {
+                if (!lock_piece(&data->current, data->matrix, data->upcoming)) {
+                    return false;
+                }
+                data->locking = false;
+            }
+        } else {
+            data->locking = true;
+            data->started_locking = elapsed_time;
+        }
+    } else {
+        data->locking = false;
+    }
+    return true;
+}
+
+enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
+    if (!gameGravity(data, pressed, elapsed_time)) {
+        return END_STATE;
+    }
+
+    if (!gameKeyboardHandling(data, pressed, just_pressed, elapsed_time)) {
+        return END_STATE;
+    }
+    
     drawGame(renderer, data->matrix, data->current);    
 
     return GAME_STATE;
