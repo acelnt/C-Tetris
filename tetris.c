@@ -1,7 +1,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_timer.h>
 #include <SDL2/SDL_image.h>
-#include <SDL2/SDL_video.h>
+#include <SDL2/SDL_ttf.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -9,10 +9,10 @@
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 #define SQUARE_SIZE 20
-#define SDROP_GRAVITY 0.1
+#define SDROP_GRAVITY 0
 #define LOCK_DELAY 0.5
-#define DAS 0.133
-#define DAS_MOVE_SPEED 0.05
+#define DAS 0.100
+#define DAS_MOVE_SPEED 0
 
 struct block{
     bool exists;
@@ -67,6 +67,7 @@ const struct block_colours {
 struct game_data {
     int level;
     int score;
+    int lines;
     struct tetromino current;
     struct tetromino upcoming[14];
     struct block matrix[40][10];
@@ -76,11 +77,16 @@ struct game_data {
     double last_das_move;
     bool locking;
     double started_locking;
+    struct tetromino hold_piece;
+    bool holding;
+    bool has_been_held;
 };
 
 struct assets {
     SDL_Texture *logo;
     SDL_Texture *play_button;
+    SDL_Texture *end;
+    TTF_Font *font;
 };
 
 struct pos {
@@ -146,6 +152,22 @@ const bool T[4][4] = {{0, 1, 0, 0},
 
 bool tetrominoes[7][4][4];
 const char names[7] = {'I', 'T', 'Z', 'S', 'L', 'J', 'O'};
+
+const int scoring[4] = {100, 300, 500, 800};
+
+bool collides(struct block matrix[40][10], bool shape[4][4], struct pos pos) {
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            if (shape[i][j]) {
+                if (pos.x + j < 0 || pos.x + j > 9 || pos.y - i < 0 || pos.y - i > 40 || matrix[(int) pos.y - i][(int) pos.x + j].exists) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
 
 void emptyMatrix(struct block matrix[40][10]) {
     int i, j;
@@ -233,13 +255,13 @@ void duplicateBase(bool base[][4], bool target[][4]) {
 }
 
 void initTetrominoes() {
-    duplicateBase(I, tetrominoes[0]);
-    duplicateBase(T, tetrominoes[1]);
-    duplicateBase(Z, tetrominoes[2]);
-    duplicateBase(S, tetrominoes[3]);
-    duplicateBase(L, tetrominoes[4]);
-    duplicateBase(J, tetrominoes[5]);
-    duplicateBase(O, tetrominoes[6]);
+    duplicateBase((bool (*)[4])I, tetrominoes[0]);
+    duplicateBase((bool (*)[4])T, tetrominoes[1]);
+    duplicateBase((bool (*)[4])Z, tetrominoes[2]);
+    duplicateBase((bool (*)[4])S, tetrominoes[3]);
+    duplicateBase((bool (*)[4])L, tetrominoes[4]);
+    duplicateBase((bool (*)[4])J, tetrominoes[5]);
+    duplicateBase((bool (*)[4]) O, tetrominoes[6]);
 }
 
 void getTetrominoes(bool tetrs[][4][4]) {
@@ -249,28 +271,57 @@ void getTetrominoes(bool tetrs[][4][4]) {
     }
 }
 
-void getTetrominoesNames(char *nams) {
+void getTetrominoesNames(char nams[7]) {
     int i;
     for (i = 0; i < 7; i++) {
         nams[i] = names[i];
     }
 }
 
+const bool (*getShape(char type))[4][4] {
+    switch(type) {
+        case 'I':
+            return &I;
+        case 'T':
+            return &T;
+        case 'L':
+            return &L;
+        case 'J':
+            return &J;
+        case 'S':
+            return &S;
+        case 'Z':
+            return &Z;
+        case 'O':
+            return &O;
+    }
+    return &I;
+}
+
+int getDroppedPos(struct block matrix[40][10], struct tetromino piece) {
+    int drop = 0;
+    while (true) {
+        if (collides(matrix, piece.base, (struct pos) {piece.x, piece.y - drop})) {
+            return drop - 1;
+        }
+        drop = drop + 1;
+    }
+}
+
 //here we generate a new array of 7 blocks and add those blocks to the array 'upcoming' from the point 'from'
 void extendUpcoming(struct tetromino upcoming[], int from) {
     struct tetromino selection[7];
-    bool choices[7][4][4];
-    getTetrominoes(&choices);
 
     char choice_names[7];
-    getTetrominoesNames(&choice_names);
+    getTetrominoesNames(choice_names);
 
     int length;
     for (length = 0; length < 7; length++) {
         int random = rand() % (7-length);
         struct tetromino temp;
 
-        duplicateBase(&choices[random], &temp.base);
+        bool (*shape)[4][4] = (bool (*)[4][4])getShape(choice_names[random]);
+        duplicateBase(*shape, temp.base);
         temp.type = choice_names[random];
         temp.y = 20;
         temp.x = 3;
@@ -279,7 +330,6 @@ void extendUpcoming(struct tetromino upcoming[], int from) {
 
         int i;
         for (i = random; i < 7; i++) {
-            duplicateBase(choices[i+1], choices[i]);
             choice_names[i] = choice_names[i + 1];
         }
     }
@@ -446,7 +496,7 @@ void rotateShape(bool base[4][4], char type, bool new_shape[4][4], signed int am
     }
 }
 
-bool newCurrent(struct tetromino upcoming[], struct tetromino *current) {
+bool newCurrent(struct tetromino upcoming[], struct tetromino *current, struct block matrix[40][10]) {
     static int count = 0;
     count += 1;
     duplicateBase(upcoming[0].base, current->base);
@@ -461,6 +511,7 @@ bool newCurrent(struct tetromino upcoming[], struct tetromino *current) {
         count = 0;
         extendUpcoming(upcoming, 7);
     }
+    return !collides(matrix, current->base, (struct pos) {current->x, current->y});
 }
 
 SDL_Texture* loadTexture(SDL_Renderer *renderer, const char *path) {
@@ -497,19 +548,35 @@ void render(SDL_Renderer *renderer) {
 void preloadAssets(SDL_Renderer *renderer) {
     assets.logo = loadTexture(renderer, "logo.png");
     assets.play_button = loadTexture(renderer, "play button.png");
+    assets.end = loadTexture(renderer, "end screen.png");
+    assets.font = TTF_OpenFont("Roboto-Regular.ttf", 40*WINDOW_HEIGHT/600);
+}
+
+void drawText(SDL_Renderer *renderer, TTF_Font *font, char text[], SDL_Colour col, struct pos pos) {
+    SDL_Surface *text_surface = TTF_RenderText_Solid(font, text, col);
+    SDL_Texture *text_texture = SDL_CreateTextureFromSurface(renderer, text_surface);
+    SDL_Rect target;
+    target.x = pos.x;
+    target.y = pos.y;
+    SDL_QueryTexture(text_texture, NULL, NULL, &target.w, &target.h);
+    SDL_FreeSurface(text_surface);
+    SDL_RenderCopy(renderer, text_texture, NULL, &target);
+    SDL_DestroyTexture(text_texture);
 }
 
 void initGame(struct game_data *data, double elapsed_time) {
     extendUpcoming(data->upcoming, 0);
     extendUpcoming(data->upcoming, 7);
-    newCurrent(data->upcoming, &(data->current));
+    newCurrent(data->upcoming, &(data->current), data->matrix);
     data->level = 1;
     emptyMatrix(data->matrix);
     data->score = 0;
     data->last_drop = elapsed_time;
     data->locking = false;
     data->started_locking = elapsed_time;
-    data->last_das_move = elapsed_time;
+    data->holding = false;
+    data->has_been_held = false;
+    data->lines = 0;
 }
 
 void drawGhost(SDL_Renderer *renderer, struct block matrix[40][10], struct tetromino piece, struct pos board_pos) {
@@ -538,34 +605,36 @@ void drawUpcoming(SDL_Renderer *renderer, struct tetromino upcoming[14], struct 
     }
 }
 
-void drawGame(SDL_Renderer *renderer, struct block matrix[40][20], struct tetromino current, struct tetromino upcoming[14]) {
+void drawGameText(SDL_Renderer *renderer, int level, int score, struct pos board_pos) {
+    int length = snprintf( NULL, 0, "%d", level);
+    char* level_str = malloc( length + 1 );
+    snprintf( level_str, length + 1, "%d", level);
+    drawText(renderer, assets.font, level_str, (SDL_Colour) {0, 0, 0, 0}, (struct pos) {board_pos.x - SQUARE_SIZE*4, board_pos.y + SQUARE_SIZE*4});
+
+    length = snprintf( NULL, 0, "%d", score);
+    char* score_str = malloc( length + 1 );
+    snprintf( score_str, length + 1, "%d", score);
+    drawText(renderer, assets.font, score_str, (SDL_Colour) {0, 0, 0, 0}, (struct pos) {board_pos.x + SQUARE_SIZE, board_pos.y - 50*WINDOW_HEIGHT/600});
+    
+}
+
+void drawGame(SDL_Renderer *renderer, struct block matrix[40][10], struct tetromino current, struct tetromino upcoming[14], bool holding, struct tetromino held_piece, int score, int level) {
     struct pos board_pos = {WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10};
     drawBoard(renderer, board_pos, SQUARE_SIZE);
     drawMatrix(renderer, matrix, board_pos);
     drawGhost(renderer, matrix, current, board_pos);
     drawShape(renderer, current.base, (struct pos) {board_pos.x + current.x*SQUARE_SIZE, board_pos.y + (19-current.y)*SQUARE_SIZE}, getBlockColour(current.type));
     drawUpcoming(renderer, upcoming, board_pos);
-}
-
-bool collides(struct block matrix[40][10], bool shape[4][4], struct pos pos) {
-    int i, j;
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
-            if (shape[i][j]) {
-                //printf("%i\n", current.y - i - offset_y);
-                if (pos.x + j < 0 || pos.x + j > 9 || pos.y - i < 0 || pos.y - i > 40 || matrix[(int) pos.y - i][(int) pos.x + j].exists) {
-                    return true;
-                }
-            }
-        }
+    if (holding) {
+        drawShape(renderer, held_piece.base, (struct pos) {board_pos.x - 5*SQUARE_SIZE, board_pos.y + SQUARE_SIZE}, getBlockColour(held_piece.type));
     }
-    return false;
+    drawGameText(renderer, level, score, board_pos);
 }
 
 bool tryDrop(int level, struct tetromino *current, struct block matrix[40][10], double *last_drop, double elapsed_time, bool sdrop) {
     float gravity;
     if (!sdrop) {
-        gravity = (0.8-((level-1)*0.007));
+        gravity = pow((0.8-((level-1)*0.007)), (level-1));
     } else {
         gravity = SDROP_GRAVITY;
     }
@@ -596,29 +665,6 @@ bool overflows(struct tetromino piece) {
     return result;
 }
 
-bool lockPiece(struct tetromino piece, struct block matrix[40][10]) {
-    int i, j;
-    for (i = 0; i < 4; i++) {
-        for (j = 0; j < 4; j++) {
-            if (piece.base[i][j]) {
-                matrix[piece.y - i][piece.x + j].exists = true;
-                matrix[piece.y - i][piece.x + j].col = getBlockColour(piece.type);
-            }
-        }
-    }
-    return overflows(piece);
-}
-
-int getDroppedPos(struct block matrix[40][10], struct tetromino piece) {
-    int drop = 0;
-    while (true) {
-        if (collides(matrix, piece.base, (struct pos) {piece.x, piece.y - drop})) {
-            return drop - 1;
-        }
-        drop = drop + 1;
-    }
-}
-
 int getDASsedPos(struct block matrix[40][10], struct tetromino piece, int direction) {
     int move = 0;
     while (true) {
@@ -629,12 +675,21 @@ int getDASsedPos(struct block matrix[40][10], struct tetromino piece, int direct
     }
 }
 
-bool lock_piece(struct tetromino *piece, struct block matrix[40][10], struct tetromino upcoming[14]) {
-    if (lockPiece(*piece, matrix)) {
+bool lockPiece(struct tetromino *piece, struct block matrix[40][10], struct tetromino upcoming[14], bool *has_been_held) {
+    *has_been_held = false;
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            if (piece->base[i][j]) {
+                matrix[piece->y - i][piece->x + j].exists = true;
+                matrix[piece->y - i][piece->x + j].col = getBlockColour(piece->type);
+            }
+        }
+    }
+    if (overflows(*piece)) {
         return false;
     }
-    newCurrent(upcoming, piece);
-    if (collides(matrix, piece->base, (struct pos) {piece->x, piece->y})) {
+    if (!newCurrent(upcoming, piece, matrix)) {
         return false;
     }
     return true;
@@ -692,7 +747,7 @@ bool gameKeyboardHandling(struct game_data *data, struct presses pressed, struct
     }
 
     if (just_pressed.rotc || just_pressed.rota || just_pressed.rot180) {
-        int amount;
+        int amount = 0;
         if (just_pressed.rotc) {
             amount = 1;
         } else if (just_pressed.rota) {
@@ -710,11 +765,32 @@ bool gameKeyboardHandling(struct game_data *data, struct presses pressed, struct
 
     if (just_pressed.hdrop) {
         data->current.y = data->current.y - getDroppedPos(data->matrix, data->current);
-        if (!lock_piece(&data->current, data->matrix, data->upcoming)) {
+        if (!lockPiece(&data->current, data->matrix, data->upcoming, &data->has_been_held)) {
             return false;
         }
         data->locking = false;
     }
+
+    if (just_pressed.hold && !data->has_been_held) {
+        if (!data->holding) {
+            data->holding = true;
+            data->locking = false;
+            data->hold_piece = data->current;
+            if (!newCurrent(data->upcoming, &data->current, data->matrix)) {
+                return false;
+            }
+        } else {
+            data->locking = false;
+            struct tetromino temp = data->current;
+            data->current = data->hold_piece;
+            data->hold_piece = temp;
+        }
+        data->hold_piece.x = 3;
+        data->hold_piece.y = 20;
+        duplicateBase((bool (*)[4]) *getShape(data->hold_piece.type), data->hold_piece.base);
+        data->has_been_held = true;
+    }
+    return true;
 }
 
 bool gameGravity(struct game_data *data, struct presses pressed, double elapsed_time) {
@@ -723,7 +799,7 @@ bool gameGravity(struct game_data *data, struct presses pressed, double elapsed_
     if (collides(data->matrix, data->current.base, (struct pos) {data->current.x, data->current.y - 1})) {
         if (data->locking) {
             if (elapsed_time > data->started_locking + LOCK_DELAY) {
-                if (!lock_piece(&data->current, data->matrix, data->upcoming)) {
+                if (!lockPiece(&data->current, data->matrix, data->upcoming, &data->has_been_held)) {
                     return false;
                 }
                 data->locking = false;
@@ -738,6 +814,48 @@ bool gameGravity(struct game_data *data, struct presses pressed, double elapsed_
     return true;
 }
 
+int fullLineCount(struct block matrix[40][10]) {
+    int count = 0;
+    int i, j;
+    for (i = 0; i < 40; i++) {
+        bool full = true;
+        for (j = 0; j < 10; j++) {
+            if (!matrix[i][j].exists) {
+                full = false;
+            }
+        }
+        if (full) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
+
+//hopefully line 40 will always be clear
+void clearLine(struct block matrix[40][10], int line) {
+    int i, j;
+    for (i = line; i < 39; i++) {
+        for (j = 0; j < 10; j++) {
+            matrix[i][j] = matrix[i + 1][j];
+        }
+    }
+}
+
+void clearLines(struct block matrix[40][10]) {
+    int i, j;
+    for (i = 39; i > -1; i--) {
+        bool full = true;
+        for (j = 0; j < 10; j++) {
+            if (!matrix[i][j].exists) {
+                full = false;
+            }
+        }
+        if (full) {
+            clearLine(matrix, i);
+        }
+    }
+}
+
 enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
     if (!gameGravity(data, pressed, elapsed_time)) {
         return END_STATE;
@@ -746,8 +864,14 @@ enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct press
     if (!gameKeyboardHandling(data, pressed, just_pressed, elapsed_time)) {
         return END_STATE;
     }
+
+    int lines_cleared = fullLineCount(data->matrix);
+    data->score = data->score + scoring[lines_cleared-1]*data->level;
+    data->lines = data->lines + lines_cleared;
+    data->level = (int) data->lines / 10 + 1;
+    clearLines(data->matrix);
     
-    drawGame(renderer, data->matrix, data->current, data->upcoming);    
+    drawGame(renderer, data->matrix, data->current, data->upcoming, data->holding, data->hold_piece, data->score, data->level);    
 
     return GAME_STATE;
 }
@@ -761,16 +885,22 @@ enum states menuRun(SDL_Renderer *renderer, struct presses pressed) {
     return MENU_STATE;
 }
 
-enum states endRun(SDL_Renderer *renderer, struct presses pressed) {
-
+enum states endRun(SDL_Renderer *renderer, struct presses pressed, int score) {
+    renderTexture(assets.end, renderer, 0, 0, WINDOW_WIDTH, 1045*WINDOW_WIDTH/2048);
+    if (pressed.enter) {
+        return MENU_STATE;
+    }
+    return END_STATE;
 }
 
 int main() {
     //initialise
-    if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO)!= 0) {
+    if (SDL_Init(SDL_INIT_VIDEO)!= 0) {
         printf("error initialising SDL: %s\n", SDL_GetError());
         return 1;
     }
+
+    TTF_Init();
 
     //create window and renderer
     SDL_Window * win = SDL_CreateWindow("Tetris", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
@@ -823,7 +953,7 @@ int main() {
                 state = gameRun(renderer, &data, pressed, just_pressed, elapsed_time);
                 break;
             case END_STATE:
-                state = endRun(renderer, just_pressed);
+                state = endRun(renderer, just_pressed, data.score);
                 break;
         }
 
@@ -838,8 +968,12 @@ int main() {
     }
 
     //destroy window and renderer and uninitialise SDL
+    SDL_DestroyTexture(assets.logo);
+    SDL_DestroyTexture(assets.play_button);
+    TTF_CloseFont(assets.font);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(win);
+    TTF_Quit();
     SDL_Quit();
     return 0;
 }
