@@ -25,12 +25,19 @@ Works in Linux, not sure about Windows or macOS.
 # Controls
 
 Left and right arrows to move tetromino left and right.
+
 Up arrow to rotate clockwise.
+
 Down arrow to soft drop.
+
 Space to hard drop.
+
 Z to rotate anticlockwise.
+
 X to rotate 180 degrees.
+
 Right shift to hold block.
+
 Hold to left or right to zoom.
 
 # Preferences
