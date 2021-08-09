@@ -9,6 +9,8 @@
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 #define SQUARE_SIZE 20
+#define SDROP_GRAVITY 0.1
+#define LOCK_DELAY 0.5
 
 struct block{
     bool exists;
@@ -50,14 +52,14 @@ const struct block_colours {
     SDL_Colour L;
     SDL_Colour J;
     SDL_Colour O;
-} block_colours = {
-    (SDL_Colour) {0, 255, 255, 255},
-    (SDL_Colour) {255, 0, 0, 255},
-    (SDL_Colour) {0, 255, 0, 255},
-    (SDL_Colour) {200, 0, 200, 255},
-    (SDL_Colour) {255, 165, 0, 255},
-    (SDL_Colour) {0, 0, 255, 255},
-    (SDL_Colour) {255, 255, 0, 255}
+} BLOCK_COLOURS = {
+    {0, 255, 255, 255},
+    {255, 0, 0, 255},
+    {0, 255, 0, 255},
+    {200, 0, 200, 255},
+    {255, 165, 0, 255},
+    {0, 0, 255, 255},
+    {255, 255, 0, 255}
 };
 
 struct game_data {
@@ -69,7 +71,8 @@ struct game_data {
     double last_drop;
     Uint64 right_das;
     Uint64 left_das;
-
+    bool locking;
+    double started_locking;
 };
 
 struct assets {
@@ -78,8 +81,26 @@ struct assets {
 };
 
 struct pos {
-    int x;
-    int y;
+    float x;
+    float y;
+};
+
+const struct block_rotations {
+    struct pos I;
+    struct pos Z;
+    struct pos S;
+    struct pos T;
+    struct pos L;
+    struct pos J;
+    struct pos O;
+} BLOCK_ROTATIONS = {
+    {2, 2},
+    {1.5, 1.5},
+    {1.5, 1.5},
+    {1.5, 1.5},
+    {1.5, 1.5},
+    {1.5, 1.5},
+    {2, 1}
 };
 
 struct assets assets;
@@ -135,65 +156,65 @@ void emptyMatrix(struct block matrix[40][10]) {
 SDL_Colour getBlockColour(char type) {
     switch(type) {
         case 'I':
-            return block_colours.I;
+            return BLOCK_COLOURS.I;
         case 'T':
-            return block_colours.T;
+            return BLOCK_COLOURS.T;
         case 'L':
-            return block_colours.L;
+            return BLOCK_COLOURS.L;
         case 'J':
-            return block_colours.J;
+            return BLOCK_COLOURS.J;
         case 'S':
-            return block_colours.S;
+            return BLOCK_COLOURS.S;
         case 'Z':
-            return block_colours.Z;
+            return BLOCK_COLOURS.Z;
         case 'O':
-            return block_colours.O;
+            return BLOCK_COLOURS.O;
         default:
             return (SDL_Colour) {0, 0, 0, 255};
     }
 }
 
 //function to draw empty board
-void drawBoard(SDL_Renderer * renderer, int x, int y, int size) {
+void drawBoard(SDL_Renderer * renderer, struct pos board_pos, int size) {
     SDL_SetRenderDrawColor(renderer, 50, 50, 50, 255);
 
     int i;
     for (i = 0; i < 11; i++) {
-        SDL_RenderDrawLine(renderer, x + i*size, y, x +i*size, y+size*20);
+        SDL_RenderDrawLine(renderer, board_pos.x + i*size, board_pos.y, board_pos.x +i*size, board_pos.y+size*20);
     }
     for (i = 0; i < 21; i++) {
-        SDL_RenderDrawLine(renderer, x, y+size*i, x +10*size, y+size*i);
+        SDL_RenderDrawLine(renderer, board_pos.x, board_pos.y+size*i, board_pos.x +10*size, board_pos.y+size*i);
     }
 
     //makes it so that there is a 2 pixel wide border
-    SDL_Point border[5] = {{x-1, y-1}, {x-1, y+20*size+1}, {x+10*size+1, y + 20*size+1}, {x+10*size+1, y-1}, {x-1, y-1}};
+    SDL_Point border[5] = {{board_pos.x-1, board_pos.y-1}, {board_pos.x-1, board_pos.y+20*size+1}, {board_pos.x+10*size+1, board_pos.y + 20*size+1}, {board_pos.x+10*size+1, board_pos.y-1}, {board_pos.x-1, board_pos.y-1}};
     SDL_RenderDrawLines(renderer, border, 5);
 }
 
 //function to draw a single filled square
-void drawBlock(SDL_Renderer * renderer, int x, int y, SDL_Colour col) {
+void drawBlock(SDL_Renderer * renderer, struct pos pos, SDL_Colour col) {
     SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
-    SDL_Rect rect = {x, y, SQUARE_SIZE, SQUARE_SIZE};
+    SDL_Rect rect = {pos.x, pos.y, SQUARE_SIZE, SQUARE_SIZE};
     SDL_RenderFillRect(renderer, &rect);
 }
 
-void drawMatrix(SDL_Renderer * renderer, struct block matrix[][10], int x, int y) {
+void drawMatrix(SDL_Renderer * renderer, struct block matrix[][10], struct pos board_pos) {
     int i, j;
     for (i = 0; i < 20; i++) {
         for (j = 0; j < 10; j++) {
             if (matrix[i][j].exists) {
-                drawBlock(renderer, x + j*SQUARE_SIZE,y + (19-i)*SQUARE_SIZE, matrix[i][j].col);
+                drawBlock(renderer, (struct pos) {board_pos.x + j*SQUARE_SIZE, board_pos.y + (19-i)*SQUARE_SIZE}, matrix[i][j].col);
             }
         }
     }
 }
 
-void drawTetromino(SDL_Renderer *renderer, struct tetromino tetromino, int board_x, int board_y) {
+void drawTetromino(SDL_Renderer *renderer, struct tetromino tetromino, struct pos board_pos) {
     int i, j;
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
             if (tetromino.base[i][j]) {
-                drawBlock(renderer, board_x + tetromino.x*SQUARE_SIZE + j*SQUARE_SIZE, board_y + (19-tetromino.y)*SQUARE_SIZE + i*SQUARE_SIZE, getBlockColour(tetromino.type));
+                drawBlock(renderer, (struct pos) {board_pos.x + tetromino.x*SQUARE_SIZE + j*SQUARE_SIZE, board_pos.y + (19-tetromino.y)*SQUARE_SIZE + i*SQUARE_SIZE}, getBlockColour(tetromino.type));
             }
         }
     }
@@ -265,55 +286,78 @@ void extendUpcoming(struct tetromino upcoming[], int from) {
     }
 }
 
+struct pos rotationPoint(char type) {
+    switch(type) {
+        case 'I':
+            return BLOCK_ROTATIONS.I;
+        case 'T':
+            return BLOCK_ROTATIONS.T;
+        case 'L':
+            return BLOCK_ROTATIONS.L;
+        case 'J':
+            return BLOCK_ROTATIONS.J;
+        case 'S':
+            return BLOCK_ROTATIONS.S;
+        case 'Z':
+            return BLOCK_ROTATIONS.Z;
+        case 'O':
+            return BLOCK_ROTATIONS.O;
+        default:         
+            return (struct pos) {1.5, 1.5};
+    }
+}
+
 struct presses updatePressed (struct presses *pressed) {
     SDL_Event e;
     struct presses just_pressed = presses_default;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
             case SDL_KEYDOWN:
-                switch (e.key.keysym.sym) {
-                    case SDLK_UP:
-                        pressed->rotc = true;
-                        just_pressed.rotc = true;
-                        break;
-                    case SDLK_DOWN:
-                        pressed->sdrop = true;
-                        just_pressed.sdrop = true;
-                        break;
-                    case SDLK_LEFT:
-                        pressed->left = true;
-                        just_pressed.left = true;
-                        break;
-                    case SDLK_RIGHT:
-                        pressed->right = true;
-                        just_pressed.right = true;
-                        break;
-                    case SDLK_RETURN:
-                        pressed->enter = true;
-                        just_pressed.enter = true;
-                        break;
-                    case SDLK_SPACE:
-                        pressed->hdrop = true;
-                        just_pressed.hdrop = true;
-                        break;
-                    case SDLK_z:
-                        pressed->rota = true;
-                        just_pressed.rota = true;
-                        break;
-                    case SDLK_x:
-                        pressed->rot180 = true;
-                        just_pressed.rot180 = true;
-                        break;
-                    case SDLK_RSHIFT:
-                        pressed->hold = true;
-                        just_pressed.hold = true;
-                        break;
-                    case SDLK_ESCAPE:
-                        pressed->quit = true;
-                        just_pressed.quit = true;
-                        break;
+                if (e.key.repeat == 0) {
+                    switch (e.key.keysym.sym) {
+                        case SDLK_UP:
+                            pressed->rotc = true;
+                            just_pressed.rotc = true;
+                            break;
+                        case SDLK_DOWN:
+                            pressed->sdrop = true;
+                            just_pressed.sdrop = true;
+                            break;
+                        case SDLK_LEFT:
+                            pressed->left = true;
+                            just_pressed.left = true;
+                            break;
+                        case SDLK_RIGHT:
+                            pressed->right = true;
+                            just_pressed.right = true;
+                            break;
+                        case SDLK_RETURN:
+                            pressed->enter = true;
+                            just_pressed.enter = true;
+                            break;
+                        case SDLK_SPACE:
+                            pressed->hdrop = true;
+                            just_pressed.hdrop = true;
+                            break;
+                        case SDLK_z:
+                            pressed->rota = true;
+                            just_pressed.rota = true;
+                            break;
+                        case SDLK_x:
+                            pressed->rot180 = true;
+                            just_pressed.rot180 = true;
+                            break;
+                        case SDLK_RSHIFT:
+                            pressed->hold = true;
+                            just_pressed.hold = true;
+                            break;
+                        case SDLK_ESCAPE:
+                            pressed->quit = true;
+                            just_pressed.quit = true;
+                            break;
+                    }
+                    break;
                 }
-                break;
             case SDL_KEYUP:
                 switch (e.key.keysym.sym) {
                     case SDLK_UP:
@@ -357,6 +401,44 @@ struct presses updatePressed (struct presses *pressed) {
         }
     }
     return just_pressed;
+}
+
+void clearShape(bool piece[4][4]) {
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            piece[i][j] = false;
+        }
+    }
+}
+
+void rotateShape(bool base[4][4], char type, bool new_shape[4][4], signed int amount) {
+    clearShape(new_shape);
+    struct pos rot_point = rotationPoint(type);
+    amount = amount % 4;
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            if (base[i][j]) {
+                float y = i + 0.5 - rot_point.y;
+                float x = j + 0.5 - rot_point.x;
+                switch (amount) {
+                    case 0:
+                        new_shape[(int)(rot_point.y + y - 0.5)][(int)(rot_point.x + x - 0.5)] = true;
+                        break;
+                    case 1:
+                        new_shape[(int)(rot_point.y + x - 0.5)][(int)(rot_point.x - y - 0.5)] = true;
+                        break;
+                    case 2:
+                        new_shape[(int)(rot_point.y - y - 0.5)][(int)(rot_point.x - x - 0.5)] = true;
+                        break;
+                    case 3:
+                        new_shape[(int)(rot_point.y - x - 0.5)][(int)(rot_point.x + y - 0.5)] = true;
+                        break;
+                }
+            }
+        }
+    }
 }
 
 bool newCurrent(struct tetromino upcoming[], struct tetromino *current) {
@@ -420,22 +502,41 @@ void initGame(struct game_data *data, double elapsed_time) {
     emptyMatrix(data->matrix);
     data->score = 0;
     data->last_drop = elapsed_time;
+    data->locking = false;
+    data->started_locking = elapsed_time;
+}
+
+void drawGhost(SDL_Renderer *renderer, struct block matrix[40][10], struct tetromino piece, struct pos board_pos) {
+    int offset = getDroppedPos(matrix, piece);
+    SDL_Colour col = getBlockColour(piece.type);
+    col.r = col.r/2;
+    col.g = col.g/2;
+    col.b = col.b/2;
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+            if (piece.base[i][j]) {
+                drawBlock(renderer, (struct pos) {board_pos.x + piece.x*SQUARE_SIZE + j*SQUARE_SIZE, board_pos.y + (19-piece.y+offset)*SQUARE_SIZE + i*SQUARE_SIZE}, col);
+            }
+        }
+    }
 }
 
 void drawGame(SDL_Renderer *renderer, struct block matrix[40][20], struct tetromino current) {
     struct pos board_pos = {WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10};
-    drawBoard(renderer, board_pos.x, board_pos.y, SQUARE_SIZE);
-    drawMatrix(renderer, matrix, WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10);
-    drawTetromino(renderer, current, board_pos.x, board_pos.y);
+    drawBoard(renderer, board_pos, SQUARE_SIZE);
+    drawMatrix(renderer, matrix, board_pos);
+    drawGhost(renderer, matrix, current, board_pos);
+    drawTetromino(renderer, current, board_pos);
 }
 
-bool collides(struct block matrix[40][10], struct tetromino current, int offset_x, int offset_y) {
+bool collides(struct block matrix[40][10], bool shape[4][4], struct pos pos) {
     int i, j;
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
-            if (current.base[i][j]) {
+            if (shape[i][j]) {
                 //printf("%i\n", current.y - i - offset_y);
-                if (current.x + j + offset_x < 0 || current.x + j + offset_x > 9 || current.y - i - offset_y < 0 || current.y - i - offset_y > 40 || matrix[current.y - i - offset_y][j + offset_x + current.x].exists) {
+                if (pos.x + j < 0 || pos.x + j > 9 || pos.y - i < 0 || pos.y - i > 40 || matrix[(int) pos.y - i][(int) pos.x + j].exists) {
                     return true;
                 }
             }
@@ -444,13 +545,17 @@ bool collides(struct block matrix[40][10], struct tetromino current, int offset_
     return false;
 }
 
-bool tryDrop(int level, struct tetromino *current, struct block matrix[40][10], double *last_drop, double elapsed_time) {
-    float gravity = (0.8-((level-1)*0.007));
-    //float gravity = 0.02;
+bool tryDrop(int level, struct tetromino *current, struct block matrix[40][10], double *last_drop, double elapsed_time, bool sdrop) {
+    float gravity;
+    if (!sdrop) {
+        gravity = (0.8-((level-1)*0.007));
+    } else {
+        gravity = SDROP_GRAVITY;
+    }
     if (elapsed_time > *last_drop + gravity) {
         *last_drop = elapsed_time;
 
-        if (!collides(matrix, *current, 0, 1)) {
+        if (!collides(matrix, current->base, (struct pos) {current->x, current->y - 1})) {
             current->y = current->y - 1;
         } else {
             return false;
@@ -487,25 +592,67 @@ bool lockPiece(struct tetromino piece, struct block matrix[40][10]) {
     return overflows(piece);
 }
 
+int getDroppedPos(struct block matrix[40][10], struct tetromino piece) {
+    int drop = 0;
+    while (true) {
+        if (collides(matrix, piece.base, (struct pos) {piece.x, piece.y - drop})) {
+            return drop - 1;
+        }
+        drop = drop + 1;
+    }
+}
+
 enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
-    if (!tryDrop(data->level, &data->current, data->matrix, &data->last_drop, elapsed_time)) {
-        if (lockPiece(data->current, data->matrix)) {
-            return END_STATE;
+    tryDrop(data->level, &data->current, data->matrix, &data->last_drop, elapsed_time, pressed.sdrop);
+        
+    if (collides(data->matrix, data->current.base, (struct pos) {data->current.x, data->current.y - 1})) {
+        if (data->locking) {
+            if (elapsed_time > data->started_locking + LOCK_DELAY) {
+                if (lockPiece(data->current, data->matrix)) {
+                    return END_STATE;
+                }
+                newCurrent(data->upcoming, &data->current);
+                if (collides(data->matrix, data->current.base, (struct pos) {data->current.x, data->current.y})) {
+                    return END_STATE;
+                }
+                data->locking = false;
+            }
+        } else {
+            data->locking = true;
+            data->started_locking = elapsed_time;
         }
-        newCurrent(data->upcoming, &data->current);
-        if (collides(data->matrix, data->current, 0, 0)) {
-            return END_STATE;
-        }
+    } else {
+        data->locking = false;
     }
 
     if (just_pressed.left) {
-        if (!collides(data->matrix, data->current, -1, 0)) {
+        if (!collides(data->matrix, data->current.base, (struct pos) {data->current.x - 1, data->current.y})) {
             data->current.x = data->current.x - 1;
+            data->locking = false;
         }
     }
+
     if (just_pressed.right) {
-        if (!collides(data->matrix, data->current, 1, 0)) {
+        if (!collides(data->matrix, data->current.base, (struct pos) {data->current.x + 1, data->current.y})) {
             data->current.x = data->current.x + 1;
+            data->locking = false;
+        }
+    }
+
+    if (just_pressed.rotc || just_pressed.rota || just_pressed.rot180) {
+        int amount;
+        if (just_pressed.rotc) {
+            amount = 1;
+        } else if (just_pressed.rota) {
+            amount = 3;
+        } else if (just_pressed.rot180) {
+            amount = 2;
+        }
+        bool new_shape[4][4];
+        rotateShape(data->current.base, data->current.type, new_shape, amount);
+        if (!collides(data->matrix, new_shape, (struct pos) {data->current.x, data->current.y})) {
+            duplicateBase(new_shape, data->current.base);
+            data->locking = false;
         }
     }
 
