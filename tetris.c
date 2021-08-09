@@ -6,13 +6,14 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+#define SDROP_GRAVITY 0.05
+#define LOCK_DELAY 0.5
+#define DAS 0.133
+#define ARR 0.02
+
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
 #define SQUARE_SIZE 20
-#define SDROP_GRAVITY 0
-#define LOCK_DELAY 0.5
-#define DAS 0.100
-#define DAS_MOVE_SPEED 0
 
 struct block{
     bool exists;
@@ -698,10 +699,10 @@ bool lockPiece(struct tetromino *piece, struct block matrix[40][10], struct tetr
 bool gameKeyboardHandling(struct game_data *data, struct presses pressed, struct presses just_pressed, double elapsed_time) {
     if (pressed.left) {
         if (elapsed_time > data->left_das + DAS) {
-            if (DAS_MOVE_SPEED == 0) {
+            if (ARR == 0) {
                 data->current.x = getDASsedPos(data->matrix, data->current, -1);
             }
-            else if (elapsed_time > data->last_das_move + DAS_MOVE_SPEED) {
+            else if (elapsed_time > data->last_das_move + ARR) {
                 if(!collides(data->matrix, data->current.base, (struct pos) {data->current.x - 1, data->current.y})) {
                     data->current.x = data->current.x - 1;
                     data->last_das_move = elapsed_time;
@@ -716,10 +717,10 @@ bool gameKeyboardHandling(struct game_data *data, struct presses pressed, struct
 
     if (pressed.right) {
         if (elapsed_time > data->right_das + DAS) {
-            if (DAS_MOVE_SPEED == 0) {
+            if (ARR == 0) {
                 data->current.x = getDASsedPos(data->matrix, data->current, 1);
             }
-            else if (elapsed_time > data->last_das_move + DAS_MOVE_SPEED) {
+            else if (elapsed_time > data->last_das_move + ARR) {
                 if(!collides(data->matrix, data->current.base, (struct pos) {data->current.x + 1, data->current.y})) {
                     data->current.x = data->current.x + 1;
                     data->last_das_move = elapsed_time;
