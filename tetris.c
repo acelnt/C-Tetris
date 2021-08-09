@@ -212,12 +212,12 @@ void drawMatrix(SDL_Renderer * renderer, struct block matrix[][10], struct pos b
     }
 }
 
-void drawTetromino(SDL_Renderer *renderer, struct tetromino tetromino, struct pos board_pos) {
+void drawShape(SDL_Renderer *renderer, bool piece[4][4], struct pos pos, SDL_Colour col) {
     int i, j;
     for (i = 0; i < 4; i++) {
         for (j = 0; j < 4; j++) {
-            if (tetromino.base[i][j]) {
-                drawBlock(renderer, (struct pos) {board_pos.x + tetromino.x*SQUARE_SIZE + j*SQUARE_SIZE, board_pos.y + (19-tetromino.y)*SQUARE_SIZE + i*SQUARE_SIZE}, getBlockColour(tetromino.type));
+            if (piece[i][j]) {
+                drawBlock(renderer, (struct pos) {pos.x + j*SQUARE_SIZE, pos.y + i*SQUARE_SIZE}, col);
             }
         }
     }
@@ -528,12 +528,23 @@ void drawGhost(SDL_Renderer *renderer, struct block matrix[40][10], struct tetro
     }
 }
 
-void drawGame(SDL_Renderer *renderer, struct block matrix[40][20], struct tetromino current) {
+void drawUpcoming(SDL_Renderer *renderer, struct tetromino upcoming[14], struct pos board_pos) {
+    board_pos.x = board_pos.x + 11*SQUARE_SIZE;
+    board_pos.y = board_pos.y + SQUARE_SIZE;
+    int i;
+    for (i = 0; i < 5; i++) {
+        drawShape(renderer, upcoming[i].base, board_pos, getBlockColour(upcoming[i].type));
+        board_pos.y = board_pos.y + SQUARE_SIZE*4;
+    }
+}
+
+void drawGame(SDL_Renderer *renderer, struct block matrix[40][20], struct tetromino current, struct tetromino upcoming[14]) {
     struct pos board_pos = {WINDOW_WIDTH/2-SQUARE_SIZE*5, WINDOW_HEIGHT/2-SQUARE_SIZE*10};
     drawBoard(renderer, board_pos, SQUARE_SIZE);
     drawMatrix(renderer, matrix, board_pos);
     drawGhost(renderer, matrix, current, board_pos);
-    drawTetromino(renderer, current, board_pos);
+    drawShape(renderer, current.base, (struct pos) {board_pos.x + current.x*SQUARE_SIZE, board_pos.y + (19-current.y)*SQUARE_SIZE}, getBlockColour(current.type));
+    drawUpcoming(renderer, upcoming, board_pos);
 }
 
 bool collides(struct block matrix[40][10], bool shape[4][4], struct pos pos) {
@@ -736,7 +747,7 @@ enum states gameRun(SDL_Renderer *renderer, struct game_data *data, struct press
         return END_STATE;
     }
     
-    drawGame(renderer, data->matrix, data->current);    
+    drawGame(renderer, data->matrix, data->current, data->upcoming);    
 
     return GAME_STATE;
 }
