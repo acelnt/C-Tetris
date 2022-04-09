@@ -1,8 +1,6 @@
 C Tetris
 ========
-Tetris in c.
-
-Quite well-featured but if I come back to it I'll add wall kicks and score t-spins correctly.
+A project to try to teach myself a bit of C.
 
 # Compiling
 
