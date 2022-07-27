@@ -3,6 +3,7 @@ C Tetris
 A project to try to teach myself a bit of C.
 
 # Compiling
+Requires make, clang and sdl2
 
 clone repository and cd into it
 
@@ -17,8 +18,6 @@ run make
 run program
 
 `./game`
-
-Works in Linux, not sure about Windows or macOS.
 
 # Controls
 
