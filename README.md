@@ -3,7 +3,7 @@ C Tetris
 A project to try to teach myself a bit of C.
 
 # Compiling
-Requires make, clang and sdl2
+Requires make, clang, SDL2, SDL2_image and SDL2_ttf to be installed
 
 clone repository and cd into it
 
